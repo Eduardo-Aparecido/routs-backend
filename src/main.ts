@@ -3,7 +3,9 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 
-async function bootstrap() {
+let cachedApp: any;
+
+async function createApp() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
 
@@ -18,10 +20,32 @@ async function bootstrap() {
     }),
   );
 
+  await app.init();
+
+  return app;
+}
+
+async function bootstrap() {
+  const app = await createApp();
+  const config = app.get(ConfigService);
   const port = config.get<number>('PORT') || 3000;
 
   await app.listen(port);
+
   console.log(`ROUTS API running at http://localhost:${port}`);
 }
 
-bootstrap();
+if (process.env.VERCEL) {
+  module.exports = async (req: any, res: any) => {
+    if (!cachedApp) {
+      cachedApp = createApp();
+    }
+
+    const app = await cachedApp;
+    const server = app.getHttpAdapter().getInstance();
+
+    return server(req, res);
+  };
+} else {
+  bootstrap();
+}
