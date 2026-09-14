@@ -49,6 +49,69 @@ export class NewsService {
 
   constructor(private readonly config: ConfigService) {}
 
+  private normalizeText(text: string = ''): string {
+    return text
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private isRioVerdeNews(article: GNewsArticle): boolean {
+    const title = this.normalizeText(article.title);
+    const description = this.normalizeText(article.description);
+
+    const text = `${title} ${description}`;
+
+    const rioVerde =
+      text.includes('rio verde') ||
+      text.includes('rioverde');
+
+    if (!rioVerde) {
+      return false;
+    }
+
+    const outrosEstados = [
+      'acre',
+      'alagoas',
+      'amapa',
+      'amazonas',
+      'bahia',
+      'ceara',
+      'espirito santo',
+      'maranhao',
+      'mato grosso',
+      'mato grosso do sul',
+      'minas gerais',
+      'para',
+      'paraiba',
+      'parana',
+      'pernambuco',
+      'piaui',
+      'rio de janeiro',
+      'rio grande do norte',
+      'rio grande do sul',
+      'rondonia',
+      'roraima',
+      'santa catarina',
+      'sao paulo',
+      'sergipe',
+      'tocantins',
+    ];
+
+    const mencionaOutroEstado = outrosEstados.some((estado) =>
+      text.includes(estado),
+    );
+
+    if (mencionaOutroEstado && !text.includes('goias')) {
+      return false;
+    }
+
+    return true;
+  }
+
   async findAll(query?: string) {
     const apiKey = this.config.get<string>('GNEWS_API_KEY');
 
@@ -58,9 +121,12 @@ export class NewsService {
       );
     }
 
-    const searchQuery = query?.trim() || 'Rio Verde';
+    const userQuery = query?.trim();
 
-    // Tempo do cache: 10 minutos
+    const searchQuery = userQuery
+      ? `"Rio Verde" AND (${userQuery})`
+      : '"Rio Verde" AND (Goiás OR GO)';
+
     const CACHE_TIME = 10 * 60 * 1000;
 
     const cached = this.cache.get(searchQuery);
@@ -70,7 +136,7 @@ export class NewsService {
       return cached.data;
     }
 
-    const max = Number(this.config.get<string>('GNEWS_MAX') || 20);
+    const max = Number(this.config.get<string>('GNEWS_MAX') || 50);
 
     try {
       console.log(`Consultando GNews: "${searchQuery}"`);
@@ -81,6 +147,7 @@ export class NewsService {
       }>('https://gnews.io/api/v4/search', {
         params: {
           q: searchQuery,
+          in: 'title,description',
           lang: 'pt',
           country: 'br',
           sortby: 'publishedAt',
@@ -90,9 +157,19 @@ export class NewsService {
         timeout: 10000,
       });
 
+      const filteredArticles = response.data.articles.filter((article) =>
+        this.isRioVerdeNews(article),
+      );
+
+      const uniqueArticles = Array.from(
+        new Map(
+          filteredArticles.map((article) => [article.url, article]),
+        ).values(),
+      );
+
       const data: NewsResponse = {
-        total: response.data.totalArticles,
-        articles: response.data.articles.map((article) => ({
+        total: uniqueArticles.length,
+        articles: uniqueArticles.map((article) => ({
           id: article.id,
           title: article.title,
           description: article.description,
@@ -103,6 +180,11 @@ export class NewsService {
           source: article.source,
         })),
       };
+
+      console.log(
+        `GNews encontrou ${response.data.articles.length} artigos. ` +
+          `${uniqueArticles.length} passaram pelo filtro do ROUTS.`,
+      );
 
       this.cache.set(searchQuery, {
         data,
@@ -134,3 +216,4 @@ export class NewsService {
     }
   }
 }
+
