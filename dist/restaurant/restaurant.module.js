@@ -6,25 +6,17 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppModule = void 0;
+exports.RestaurantModule = void 0;
 const common_1 = require("@nestjs/common");
-const config_1 = require("@nestjs/config");
-const news_module_1 = require("./news/news.module");
-const cinema_module_1 = require("./cinema/cinema.module");
-const restaurant_module_1 = require("./restaurant/restaurant.module");
-let AppModule = class AppModule {
+const restaurant_controller_1 = require("./restaurant.controller");
+const restaurant_service_1 = require("./restaurant.service");
+let RestaurantModule = class RestaurantModule {
 };
-exports.AppModule = AppModule;
-exports.AppModule = AppModule = __decorate([
+exports.RestaurantModule = RestaurantModule;
+exports.RestaurantModule = RestaurantModule = __decorate([
     (0, common_1.Module)({
-        imports: [
-            config_1.ConfigModule.forRoot({
-                isGlobal: true,
-            }),
-            news_module_1.NewsModule,
-            cinema_module_1.CinemaModule,
-            restaurant_module_1.RestaurantModule,
-        ],
+        controllers: [restaurant_controller_1.RestaurantController],
+        providers: [restaurant_service_1.RestaurantService],
     })
-], AppModule);
-//# sourceMappingURL=app.module.js.map
+], RestaurantModule);
+//# sourceMappingURL=restaurant.module.js.map

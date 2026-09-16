@@ -19,18 +19,31 @@ let NewsController = class NewsController {
     constructor(newsService) {
         this.newsService = newsService;
     }
-    findAll(query) {
-        return this.newsService.findAll(query);
+    findAll(query, category) {
+        const categoryId = category
+            ? Number(category)
+            : undefined;
+        return this.newsService.findAll(query, categoryId);
+    }
+    findCategories() {
+        return this.newsService.findCategories();
     }
 };
 exports.NewsController = NewsController;
 __decorate([
     (0, common_1.Get)(),
     __param(0, (0, common_1.Query)('q')),
+    __param(1, (0, common_1.Query)('category')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], NewsController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Get)('categories'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], NewsController.prototype, "findCategories", null);
 exports.NewsController = NewsController = __decorate([
     (0, common_1.Controller)('api/news'),
     __metadata("design:paramtypes", [news_service_1.NewsService])

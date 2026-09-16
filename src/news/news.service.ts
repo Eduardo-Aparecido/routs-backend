@@ -1,23 +1,54 @@
 import {
   BadGatewayException,
   Injectable,
-  InternalServerErrorException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
-interface GNewsArticle {
-  id: string;
-  title: string;
-  description: string;
-  content?: string;
-  url: string;
-  image?: string;
-  publishedAt: string;
-  source: {
-    name: string;
-    url: string;
+interface WordPressPost {
+  id: number;
+  date: string;
+  link: string;
+  title: {
+    rendered: string;
   };
+  content: {
+    rendered: string;
+  };
+  excerpt: {
+    rendered: string;
+  };
+  thumbnail?: string;
+  postCategories?: {
+    id: number;
+    name: string;
+    slug: string;
+  }[];
+  _embedded?: {
+    'wp:featuredmedia'?: {
+      source_url?: string;
+      media_details?: {
+        sizes?: {
+          large?: {
+            source_url?: string;
+          };
+          medium_large?: {
+            source_url?: string;
+          };
+          medium?: {
+            source_url?: string;
+          };
+        };
+      };
+    }[];
+  };
+}
+
+interface WordPressCategory {
+  id: number;
+  name: string;
+  slug: string;
+  count: number;
+  parent: number;
 }
 
 export interface NewsResponse {
@@ -37,183 +68,225 @@ export interface NewsResponse {
   }[];
 }
 
+export interface NewsCategory {
+  id: number;
+  name: string;
+  slug: string;
+}
+
 @Injectable()
 export class NewsService {
-  private cache = new Map<
-    string,
-    {
-      data: NewsResponse;
-      expiresAt: number;
-    }
-  >();
+  private cache: {
+    data: NewsResponse;
+    expiresAt: number;
+  } | null = null;
 
-  constructor(private readonly config: ConfigService) {}
+  private categoriesCache: {
+    data: NewsCategory[];
+    expiresAt: number;
+  } | null = null;
 
-  private normalizeText(text: string = ''): string {
-    return text
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  private isRioVerdeNews(article: GNewsArticle): boolean {
-    const title = this.normalizeText(article.title);
-    const description = this.normalizeText(article.description);
-
-    const text = `${title} ${description}`;
-
-    const rioVerde =
-      text.includes('rio verde') ||
-      text.includes('rioverde');
-
-    if (!rioVerde) {
-      return false;
-    }
-
-    const outrosEstados = [
-      'acre',
-      'alagoas',
-      'amapa',
-      'amazonas',
-      'bahia',
-      'ceara',
-      'espirito santo',
-      'maranhao',
-      'mato grosso',
-      'mato grosso do sul',
-      'minas gerais',
-      'para',
-      'paraiba',
-      'parana',
-      'pernambuco',
-      'piaui',
-      'rio de janeiro',
-      'rio grande do norte',
-      'rio grande do sul',
-      'rondonia',
-      'roraima',
-      'santa catarina',
-      'sao paulo',
-      'sergipe',
-      'tocantins',
-    ];
-
-    const mencionaOutroEstado = outrosEstados.some((estado) =>
-      text.includes(estado),
-    );
-
-    if (mencionaOutroEstado && !text.includes('goias')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  async findAll(query?: string) {
-    const apiKey = this.config.get<string>('GNEWS_API_KEY');
-
-    if (!apiKey) {
-      throw new InternalServerErrorException(
-        'GNEWS_API_KEY não configurada. Crie o arquivo .env a partir do .env.example.',
-      );
-    }
-
-    const userQuery = query?.trim();
-
-    const searchQuery = userQuery
-      ? `"Rio Verde" AND (${userQuery})`
-      : '"Rio Verde" AND (Goiás OR GO)';
-
+  async findAll(
+    query?: string,
+    category?: number,
+  ): Promise<NewsResponse> {
     const CACHE_TIME = 10 * 60 * 1000;
 
-    const cached = this.cache.get(searchQuery);
-
-    if (cached && cached.expiresAt > Date.now()) {
-      console.log(`Notícias carregadas do cache: "${searchQuery}"`);
-      return cached.data;
+    if (
+      !query?.trim() &&
+      !category &&
+      this.cache &&
+      this.cache.expiresAt > Date.now()
+    ) {
+      console.log('Notícias carregadas do cache.');
+      return this.cache.data;
     }
 
-    const max = Number(this.config.get<string>('GNEWS_MAX') || 50);
-
     try {
-      console.log(`Consultando GNews: "${searchQuery}"`);
-
-      const response = await axios.get<{
-        totalArticles: number;
-        articles: GNewsArticle[];
-      }>('https://gnews.io/api/v4/search', {
-        params: {
-          q: searchQuery,
-          in: 'title,description',
-          lang: 'pt',
-          country: 'br',
-          sortby: 'publishedAt',
-          max: Math.min(Math.max(max, 1), 100),
-          apikey: apiKey,
+      const response = await axios.get<WordPressPost[]>(
+        'https://www.rioverde.go.gov.br/wp-json/wp/v2/posts',
+        {
+          params: {
+            per_page: 20,
+            _embed: true,
+            order: 'desc',
+            orderby: 'date',
+            page: 1,
+            ...(category ? { categories: category } : {}),
+          },
+          timeout: 10000,
         },
-        timeout: 10000,
-      });
-
-      const filteredArticles = response.data.articles.filter((article) =>
-        this.isRioVerdeNews(article),
       );
 
-      const uniqueArticles = Array.from(
-        new Map(
-          filteredArticles.map((article) => [article.url, article]),
-        ).values(),
-      );
+      let posts = response.data;
+
+      if (query?.trim()) {
+        const search = query
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '');
+
+        posts = posts.filter((post) => {
+          const title = post.title.rendered
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+
+          const content = post.content.rendered
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+
+          return title.includes(search) || content.includes(search);
+        });
+      }
 
       const data: NewsResponse = {
-        total: uniqueArticles.length,
-        articles: uniqueArticles.map((article) => ({
-          id: article.id,
-          title: article.title,
-          description: article.description,
-          content: article.content ?? '',
-          url: article.url,
-          image: article.image ?? null,
-          publishedAt: article.publishedAt,
-          source: article.source,
-        })),
+        total: posts.length,
+        articles: posts.map((post) => {
+          const featuredMedia =
+            post._embedded?.['wp:featuredmedia']?.[0];
+
+          const featuredImage =
+            featuredMedia?.media_details?.sizes?.large?.source_url ||
+            featuredMedia?.media_details?.sizes?.medium_large?.source_url ||
+            post.thumbnail ||
+            featuredMedia?.source_url ||
+            null;
+
+          const contentImageMatch = post.content.rendered.match(
+            /<img[^>]+src=["']([^"']+)["']/i,
+          );
+
+          const image =
+            featuredImage ||
+            contentImageMatch?.[1] ||
+            null;
+
+          const description =
+            post.excerpt.rendered
+              .replace(/<[^>]*>/g, '')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .trim() ||
+            post.content.rendered
+              .replace(/<[^>]*>/g, '')
+              .replace(/&nbsp;/g, ' ')
+              .replace(/&amp;/g, '&')
+              .trim()
+              .slice(0, 250);
+
+          return {
+            id: String(post.id),
+            title: post.title.rendered,
+            description,
+            content: post.content.rendered,
+            url: post.link,
+            image,
+            publishedAt: post.date,
+            source: {
+              name: 'Prefeitura de Rio Verde',
+              url: 'https://www.rioverde.go.gov.br/',
+            },
+          };
+        }),
       };
 
-      console.log(
-        `GNews encontrou ${response.data.articles.length} artigos. ` +
-          `${uniqueArticles.length} passaram pelo filtro do ROUTS.`,
-      );
+      if (!query?.trim() && !category) {
+        this.cache = {
+          data,
+          expiresAt: Date.now() + CACHE_TIME,
+        };
+      }
 
-      this.cache.set(searchQuery, {
-        data,
-        expiresAt: Date.now() + CACHE_TIME,
-      });
+      console.log(
+        `Prefeitura de Rio Verde: ${data.articles.length} notícias carregadas.`,
+      );
 
       return data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const status = error.response?.status;
-        const message = error.response?.data?.errors?.join?.(', ');
 
         console.error(
-          'Erro retornado pela GNews:',
+          'Erro ao consultar a API de notícias da Prefeitura:',
           error.response?.data,
         );
 
         throw new BadGatewayException(
-          message ||
-            `Erro ao consultar GNews${status ? ` (${status})` : ''}.`,
+          `Não foi possível consultar as notícias da Prefeitura${status ? ` (${status})` : ''}.`,
         );
       }
 
       console.error('Erro inesperado:', error);
 
       throw new BadGatewayException(
-        'Não foi possível consultar as notícias.',
+        'Não foi possível consultar as notícias da Prefeitura.',
+      );
+    }
+  }
+
+  async findCategories(): Promise<NewsCategory[]> {
+    const CACHE_TIME = 60 * 60 * 1000;
+
+    if (
+      this.categoriesCache &&
+      this.categoriesCache.expiresAt > Date.now()
+    ) {
+      console.log('Categorias carregadas do cache.');
+      return this.categoriesCache.data;
+    }
+
+    try {
+      const response = await axios.get<WordPressCategory[]>(
+        'https://www.rioverde.go.gov.br/wp-json/wp/v2/categories',
+        {
+          params: {
+            per_page: 100,
+            hide_empty: true,
+          },
+          timeout: 10000,
+        },
+      );
+
+      const categories = response.data
+        .map((category) => ({
+          id: category.id,
+          name: category.name,
+          slug: category.slug,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      this.categoriesCache = {
+        data: categories,
+        expiresAt: Date.now() + CACHE_TIME,
+      };
+
+      console.log(
+        `Prefeitura de Rio Verde: ${categories.length} categorias carregadas.`,
+      );
+
+      return categories;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+
+        console.error(
+          'Erro ao consultar as categorias da Prefeitura:',
+          error.response?.data,
+        );
+
+        throw new BadGatewayException(
+          `Não foi possível consultar as categorias da Prefeitura${status ? ` (${status})` : ''}.`,
+        );
+      }
+
+      console.error('Erro inesperado:', error);
+
+      throw new BadGatewayException(
+        'Não foi possível consultar as categorias da Prefeitura.',
       );
     }
   }
 }
-
