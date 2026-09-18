@@ -12,6 +12,7 @@ const config_1 = require("@nestjs/config");
 const news_module_1 = require("./news/news.module");
 const cinema_module_1 = require("./cinema/cinema.module");
 const restaurant_module_1 = require("./restaurant/restaurant.module");
+const weather_module_1 = require("./weather/weather.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -24,6 +25,7 @@ exports.AppModule = AppModule = __decorate([
             news_module_1.NewsModule,
             cinema_module_1.CinemaModule,
             restaurant_module_1.RestaurantModule,
+            weather_module_1.WeatherModule,
         ],
     })
 ], AppModule);

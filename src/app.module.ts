@@ -8,6 +8,8 @@ import { CinemaModule } from './cinema/cinema.module';
 
 import { RestaurantModule } from './restaurant/restaurant.module';
 
+import { WeatherModule } from './weather/weather.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -19,6 +21,9 @@ import { RestaurantModule } from './restaurant/restaurant.module';
     CinemaModule,
 
     RestaurantModule,
+
+    WeatherModule,
   ],
 })
 export class AppModule {}
+
